@@ -1,0 +1,142 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Teleprompter · raya en medio</title>
+<style>
+  body { margin: 0; background: #1c1f24; color: #eef0f3; font-family: -apple-system, system-ui, sans-serif; padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  .sub { color: #8b93a0; margin: 0 0 24px; font-size: 14px; }
+  .opcion { margin-bottom: 36px; }
+  .opcion h2 { font-size: 16px; margin: 0 0 4px; }
+  .opcion p { color: #8b93a0; margin: 0 0 10px; font-size: 14px; max-width: 900px; }
+  .monitor { position: relative; width: 100%; max-width: 1100px; aspect-ratio: 16/9; background: #000; border: 10px solid #2a2f37; border-radius: 12px; overflow: hidden; }
+  /* La raya rota del monitor, justo a la mitad */
+  .raya { position: absolute; top: 0; bottom: 0; left: calc(50% - 3px); width: 6px; background: linear-gradient(#9b2c2c, #e05a5a, #7a2222); opacity: .9; z-index: 5; }
+  .linea { position: absolute; left: 0; right: 0; top: 35%; height: 0; z-index: 4; }
+  .linea::before, .linea::after { content: ""; position: absolute; top: -9px; border: 9px solid transparent; }
+  .texto { position: absolute; top: 0; bottom: 0; color: #fff; font-weight: 700; line-height: 1.35; padding-top: calc(35% * 9 / 16 - 0.68em); }
+  .nota { color: #f2b544; font-weight: 400; font-size: .7em; }
+  .sombra { position: absolute; inset: 0; background: linear-gradient(#000 0, transparent 14%, transparent 80%, #000 100%); pointer-events: none; z-index: 3; }
+
+  /* A: texto a un lado, controles al otro */
+  .a .texto { left: 3%; width: 42%; font-size: clamp(14px, 2.6vw, 30px); }
+  .a .linea { right: 50%; }
+  .a .linea::before { left: 4px; border-left-color: #f2b544; }
+  .a .linea::after { right: 8px; border-right-color: #f2b544; }
+  .panel { position: absolute; left: calc(50% + 28px); right: 3%; top: 6%; bottom: 6%; display: flex; flex-direction: column; gap: 3%; z-index: 4; }
+  .tiempo { font-size: clamp(18px, 4vw, 44px); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tiempo small { display: block; font-size: 30%; color: #8b93a0; font-weight: 400; letter-spacing: .08em; text-transform: uppercase; }
+  .barra { height: 6px; background: #2a2f37; border-radius: 3px; overflow: hidden; }
+  .barra i { display: block; height: 100%; width: 38%; background: #f2b544; }
+  .botones { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: auto; }
+  .b { background: #171a1f; border: 1px solid #2a2f37; border-radius: 10px; padding: 3.2% 0; text-align: center; font-size: clamp(10px, 1.3vw, 15px); }
+  .b.play { grid-column: span 3; background: #f2b544; color: #1a1408; font-weight: 700; font-size: clamp(14px, 2vw, 22px); padding: 5% 0; }
+  .estado { color: #7fd48f; font-size: clamp(10px, 1.2vw, 14px); }
+
+  /* B: el texto se parte en los dos lados, saltándose el centro */
+  .b2 .linea::before { left: 4px; border-left-color: #f2b544; }
+  .b2 .linea::after { right: 4px; border-right-color: #f2b544; }
+  .partido { position: absolute; left: 3%; right: 3%; top: 0; font-size: clamp(14px, 2.6vw, 30px); color: #fff; font-weight: 700; line-height: 1.35; }
+  .renglon { display: grid; grid-template-columns: 1fr 9% 1fr; }
+  .renglon .izq { text-align: right; white-space: nowrap; overflow: hidden; }
+  .renglon .der { text-align: left; white-space: nowrap; overflow: hidden; }
+  .renglon.hueco { height: .9em; }
+  .mini { position: absolute; bottom: 0; left: 0; right: 0; z-index: 4; display: grid; grid-template-columns: 1fr 9% 1fr; padding: 1.2% 3%; background: rgba(16,18,22,.94); border-top: 1px solid #2a2f37; }
+  .mini div { display: flex; gap: 8px; align-items: center; font-size: clamp(9px, 1.1vw, 13px); color: #8b93a0; }
+  .mini .izq { justify-content: flex-end; }
+  .mini span { background: #171a1f; border: 1px solid #2a2f37; border-radius: 8px; padding: 4px 10px; color: #eef0f3; }
+  .mini span.play { background: #f2b544; color: #1a1408; font-weight: 700; }
+</style>
+
+<h1>Dos formas de librar la raya de en medio</h1>
+<p class="sub">La línea roja es la raya del monitor. En las dos, nada importante pasa por ahí. Ya sin tener que prender ni ubicar nada.</p>
+
+<div class="opcion a">
+  <h2>A · Texto a la izquierda, controles a la derecha</h2>
+  <p>El texto se lee de corrido, sin brincos, en la mitad izquierda. La mitad derecha enseña lo que falta, la barra de avance y los botones grandes. Lo malo: el texto queda en medio monitor, así que caben menos palabras por renglón.</p>
+  <div class="monitor">
+    <div class="texto" id="tA"></div>
+    <div class="sombra"></div>
+    <div class="linea"></div>
+    <div class="panel">
+      <div class="estado">● Teléfono conectado</div>
+      <div class="tiempo">0:41<small>Faltan</small></div>
+      <div class="barra"><i></i></div>
+      <div class="botones">
+        <div class="b play">Pausa</div>
+        <div class="b">⏪ Atrás</div><div class="b">⏮ Inicio</div><div class="b">Adelante ⏩</div>
+        <div class="b">− Lento</div><div class="b">Vel 6</div><div class="b">+ Rápido</div>
+        <div class="b">A− Letra</div><div class="b">⇋ Espejo</div><div class="b">A+ Letra</div>
+      </div>
+    </div>
+    <div class="raya"></div>
+  </div>
+</div>
+
+<div class="opcion b2">
+  <h2>B · El texto usa todo el monitor y brinca el centro</h2>
+  <p>Cada renglón empieza a la izquierda, se detiene antes de la raya y sigue del otro lado, como si hubiera un pasillo en medio. Cabe casi el doble de texto. Lo malo: al leer hay que saltar el pasillo en cada renglón; con práctica se acostumbra el ojo, pero al principio puede trabar.</p>
+  <div class="monitor">
+    <div class="partido" id="tB"></div>
+    <div class="sombra"></div>
+    <div class="linea"></div>
+    <div class="mini">
+      <div class="izq"><span>✕</span><span>⏮</span><span class="play">Pausa</span><span>Vel 6</span></div>
+      <div></div>
+      <div><span>A− A+</span><span>⇋ Espejo</span><span>QR</span><span>Faltan 0:41</span></div>
+    </div>
+    <div class="raya"></div>
+  </div>
+</div>
+
+<script>
+const GUION = [
+  'Hola, soy María Sada, de Inmobiliaria Sada.',
+  'Bienvenidos a esta casa en Cumbres, con tres recámaras, dos baños y medio y jardín al fondo.',
+  '[Caminar hacia la sala]',
+  'Lo primero que van a notar es la luz. La sala y el comedor dan al poniente, así que en la tarde todo se ilumina.',
+  '[PAUSA]',
+  'La cocina está remodelada, con barra y salida directa al jardín, ideal para reuniones.',
+];
+const esNota = t => /^\[.*\]$/.test(t);
+
+// A: párrafos normales
+document.getElementById('tA').innerHTML = GUION.map(p =>
+  `<p style="margin:0 0 .9em">${esNota(p) ? `<span class="nota">${p}</span>` : p}</p>`).join('');
+
+// B: cada renglón se llena primero a la izquierda y luego a la derecha del pasillo.
+function partir() {
+  const cont = document.getElementById('tB');
+  cont.innerHTML = '';
+  const fila = document.createElement('div'); fila.className = 'renglon';
+  fila.innerHTML = '<div class="izq"></div><div></div><div class="der"></div>';
+  cont.appendChild(fila);
+  const ancho = fila.querySelector('.izq').clientWidth;
+  const estilo = getComputedStyle(cont);
+  const c = document.createElement('canvas').getContext('2d');
+  cont.innerHTML = '';
+  // padding para que el primer renglón quede en la línea de lectura
+  const alto = cont.parentElement.clientHeight;
+  cont.style.paddingTop = (alto * 0.35 - parseFloat(estilo.fontSize) * 0.68) + 'px';
+  for (const p of GUION) {
+    const nota = esNota(p);
+    c.font = `${nota ? 400 : 700} ${parseFloat(estilo.fontSize) * (nota ? 0.7 : 1)}px ${estilo.fontFamily}`;
+    const palabras = p.split(' ');
+    let lado = [], mitades = [];
+    const cabe = arr => c.measureText(arr.join(' ')).width <= ancho;
+    for (const w of palabras) {
+      if (cabe([...lado, w])) lado.push(w);
+      else { mitades.push(lado.join(' ')); lado = [w]; }
+    }
+    if (lado.length) mitades.push(lado.join(' '));
+    for (let i = 0; i < mitades.length; i += 2) {
+      const r = document.createElement('div'); r.className = 'renglon';
+      const envolver = t => nota ? `<span class="nota">${t}</span>` : t;
+      r.innerHTML = `<div class="izq">${envolver(mitades[i])}</div><div></div><div class="der">${mitades[i + 1] ? envolver(mitades[i + 1]) : ''}</div>`;
+      cont.appendChild(r);
+    }
+    const h = document.createElement('div'); h.className = 'renglon hueco'; cont.appendChild(h);
+  }
+}
+partir();
+addEventListener('resize', partir);
+</script>

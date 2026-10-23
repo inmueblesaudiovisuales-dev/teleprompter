@@ -1,0 +1,10 @@
+# Lo que se instala o se arma: se vuelve a generar, no se guarda.
+node_modules/
+app/dist/
+swift/build/
+Teleprompter.app/
+
+# Datos de prueba locales (traen una clave del QR).
+app/.datos-prueba/
+
+.DS_Store

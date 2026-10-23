@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>com.inmueblesaudiovisuales.teleprompter</string>
+  <key>CFBundleName</key><string>Teleprompter</string>
+  <key>CFBundleDisplayName</key><string>Teleprompter</string>
+  <key>CFBundleExecutable</key><string>Teleprompter</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>2.0.0</string>
+  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleDevelopmentRegion</key><string>es</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSLocalNetworkUsageDescription</key><string>El teleprompter usa la red local para que el teléfono lo controle.</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <!-- La ventana carga la pantalla desde la propia computadora (127.0.0.1), sin cifrado: es local. -->
+    <key>NSAllowsLocalNetworking</key><true/>
+  </dict>
+</dict>
+</plist>

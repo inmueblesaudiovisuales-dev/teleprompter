@@ -1,0 +1,969 @@
+<meta charset="utf-8">
+<title>Teleprompter</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+*, *::before, *::after { box-sizing: border-box; }
+/* Layout: el monitor donde se usa tiene una raya vertical justo a la mitad. Por eso todo se
+   arma en dos mitades con un pasillo vacío en el centro (--pasillo): en el editor, el guion a
+   la izquierda y los ajustes a la derecha; al correr, el texto a la izquierda y los controles
+   a la derecha. Nada importante cruza el centro. */
+:root {
+  --bg: #0d0f12;
+  --panel: #171a1f;
+  --line: #2a2f37;
+  --fg: #eef0f3;
+  --muted: #8b93a0;
+  --accent: #f2b544;
+  --pasillo: 6vw;          /* el hueco del centro, donde está la raya */
+  /* Letras del sistema: sin internet no se puede bajar ninguna. */
+  --font-display: -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  --font-body: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+/* Lo escondido se queda escondido aunque su regla diga display:grid o flex. */
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- Editor: dos mitades ---------- */
+#editor {
+  min-height: 100%;
+  display: grid; grid-template-columns: 1fr var(--pasillo) 1fr;
+  padding: 24px 3vw 32px;
+}
+#editor .izq, #editor .der { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+#editor .izq { grid-column: 1; }
+#editor .der { grid-column: 3; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: 1.75rem; margin: 0; letter-spacing: -0.01em; }
+h2 { font-family: var(--font-display); font-weight: 600; font-size: 1.15rem; margin: 0; }
+.meta { color: var(--muted); font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+textarea {
+  width: 100%; flex: 1; min-height: 50vh; resize: none;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px; font-size: 1.05rem; line-height: 1.55;
+}
+.ajustes { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
+.ajuste { display: grid; gap: 6px; min-width: 0; }
+.ajuste label, .ajuste .lbl { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.ajuste .fila { display: flex; align-items: center; gap: 10px; }
+.ajuste output { font-variant-numeric: tabular-nums; min-width: 3ch; text-align: right; }
+input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.ajuste label.switch { display: flex; align-items: center; gap: 10px; padding-top: 4px; text-transform: none; letter-spacing: 0; font-size: 1rem; color: var(--fg); }
+.switch input { width: 20px; height: 20px; accent-color: var(--accent); }
+.acciones { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 12px 18px; }
+.btn.prim { background: var(--accent); border-color: var(--accent); color: #1a1408; font-weight: 700; font-size: 1.1rem; padding: 14px 28px; }
+.ayuda { color: var(--muted); font-size: 0.875rem; line-height: 1.6; margin: 0; }
+.ayuda kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-family: inherit; font-size: 0.8rem; color: var(--fg); }
+.enlinea { color: #7fd48f; font-size: 0.875rem; }
+
+/* ---------- Al correr: texto a la izquierda, controles a la derecha ---------- */
+#escena { position: fixed; inset: 0; background: #000; overflow: hidden; z-index: 5;
+  display: grid; grid-template-columns: 1fr var(--pasillo) 1fr; }
+#zona { grid-column: 1; position: relative; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+#flip { position: absolute; inset: 0; }
+#flip.espejo { transform: scaleX(-1); }
+#riel { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
+#texto {
+  margin: 0 auto;
+  padding-left: 6%; padding-right: 4%;
+  color: #fff; font-family: var(--font-body); font-weight: 700; line-height: 1.35;
+}
+#texto p { margin: 0 0 0.9em; overflow-wrap: break-word; }
+#texto .nota { color: var(--accent); font-weight: 400; font-size: 0.7em; }
+#texto .marca { background: var(--accent); color: #000; border-radius: 6px; box-shadow: 0 0 0 4px var(--accent); }
+#lectura { position: absolute; left: 0; right: 0; height: 0; pointer-events: none; }
+#lectura::before, #lectura::after { content: ""; position: absolute; top: -10px; border: 10px solid transparent; }
+#lectura::before { left: 4px; border-left-color: var(--accent); }
+#lectura::after { right: 4px; border-right-color: var(--accent); }
+#sombra { position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(#000 0, rgba(0,0,0,0) 14%, rgba(0,0,0,0) 80%, #000 100%); }
+#cuenta { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--font-display); font-size: 22vmin; color: var(--accent); background: rgba(0,0,0,.55); pointer-events: none; }
+
+#panel { grid-column: 3; display: flex; flex-direction: column; gap: 2.2vh; padding: 4vh 3vw 4vh 0; min-width: 0; overflow: auto; }
+/* En una ventana bajita el panel se recorre; sin esto, la barra de avance se aplasta hasta desaparecer. */
+#panel > * { flex-shrink: 0; }
+#pEstado { color: var(--muted); font-size: 0.95rem; min-height: 1.2em; }
+#pEstado.ok { color: #7fd48f; }
+#pTiempo { font-family: var(--font-display); font-weight: 700; font-size: clamp(36px, 6vw, 96px); line-height: 1; font-variant-numeric: tabular-nums; }
+#pTiempo small { display: block; font-size: 0.8rem; color: var(--muted); font-weight: 400; letter-spacing: .08em; text-transform: uppercase; margin-top: 6px; }
+.avance { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+#progreso { height: 100%; width: 0; background: var(--accent); }
+.botones { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: auto; }
+.botones button { min-height: 56px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 1rem; }
+.botones button:hover { border-color: var(--muted); }
+.botones button.on { color: var(--accent); border-color: var(--accent); }
+.botones .lbl { display: grid; place-items: center; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; text-align: center; }
+.botones .lbl b { display: block; color: var(--fg); font-size: 1.4rem; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+#bPlay { grid-column: span 3; min-height: 88px; background: var(--accent); border-color: var(--accent); color: #1a1408; font-family: var(--font-display); font-weight: 700; font-size: 1.8rem; }
+
+/* ---------- QR: en la mitad derecha ---------- */
+#qrPanel { position: fixed; inset: 0; z-index: 9; background: rgba(0,0,0,.85);
+  display: grid; grid-template-columns: 1fr var(--pasillo) 1fr; align-items: center; padding: 16px 3vw; }
+.qrCaja { grid-column: 3; justify-self: center; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: grid; gap: 14px; justify-items: center; max-width: 360px; width: 100%; text-align: center; }
+#qr { background: #fff; padding: 12px; border-radius: 8px; line-height: 0; }
+#qr img { display: block; width: 220px; height: 220px; max-width: 100%; }
+#qrNota { color: var(--muted); font-size: 0.875rem; line-height: 1.5; margin: 0; }
+#qrLiga { font-size: 0.75rem; color: var(--muted); word-break: break-all; user-select: all; -webkit-user-select: all; }
+
+/* En una ventana angosta no hay dos mitades: una sola columna. */
+@media (max-width: 760px) {
+  #editor { grid-template-columns: 1fr; gap: 18px; }
+  #editor .izq, #editor .der { grid-column: 1; }
+  #escena { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  #zona, #panel { grid-column: 1; }
+  #panel { padding: 12px; }
+  #qrPanel { grid-template-columns: 1fr; }
+  .qrCaja { grid-column: 1; }
+}
+
+/* ---------- Control remoto (el teléfono) ---------- */
+#remoto {
+  min-height: 100%; display: flex; flex-direction: column; gap: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 24px; max-width: 520px; margin: 0 auto; touch-action: manipulation; user-select: none; -webkit-user-select: none;
+}
+#remoto header { justify-content: space-between; }
+#rEstado { font-size: 0.875rem; color: var(--muted); }
+#rEstado.ok { color: #7fd48f; }
+.rBarra { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+#rProg { height: 100%; width: 0; background: var(--accent); }
+.rInfo { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+#rPlay { flex: 1; min-height: 28vh; border-radius: 18px; border: 0; background: var(--accent); color: #1a1408; font-family: var(--font-display); font-weight: 600; font-size: 2.4rem; }
+#rPlay.pausado { background: var(--panel); color: var(--fg); border: 2px solid var(--accent); }
+#rDesde { min-height: 56px; border-radius: 12px; border: 1px solid var(--accent); background: var(--panel); color: var(--accent); font-size: 1.05rem; font-weight: 600; }
+.rFila { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.rFila button { min-height: 60px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 1.05rem; }
+.rFila button:active, #rPlay:active, #rDesde:active { filter: brightness(1.25); }
+.rFila .lbl { display: grid; place-items: center; color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; text-align: center; }
+.rFila .lbl b { display: block; color: var(--fg); font-size: 1.4rem; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+button:disabled { opacity: .45; }
+
+/* El guion en el teléfono, para tocar dónde empezar */
+#rGuion { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; }
+#rGuion .tope { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));
+  border-bottom: 1px solid var(--line); }
+#rGuion .tope span { color: var(--muted); font-size: 0.9rem; }
+#rLista { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(40px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  font-size: 1.2rem; line-height: 1.9; }
+#rLista p { margin: 0 0 1em; }
+#rLista .nota { color: var(--accent); font-size: 0.85em; }
+#rLista [data-i] { border-radius: 5px; padding: 2px 1px; cursor: pointer; }
+#rLista [data-i]:active { background: var(--line); }
+#rLista .aqui { background: rgba(242,181,68,.25); }
+#rLista .elegida { background: var(--accent); color: #000; }
+#rAviso { color: var(--muted); }
+</style>
+
+<main id="editor">
+  <div class="izq">
+    <header>
+      <h1>Teleprompter</h1>
+      <span class="meta" id="conteo"></span>
+    </header>
+    <textarea id="guion" aria-label="Texto del guion" spellcheck="false"></textarea>
+  </div>
+
+  <div class="der">
+    <div class="acciones">
+      <button class="btn prim" id="empezar" type="button">Empezar</button>
+      <button class="btn" id="abrirQr" type="button">Controlar desde el teléfono</button>
+      <span class="enlinea" id="enlinea" hidden></span>
+    </div>
+
+    <div class="ajustes">
+      <div class="ajuste">
+        <label for="velocidad">Velocidad</label>
+        <div class="fila"><input id="velocidad" type="range" min="1" max="20" step="1"><output id="oVel"></output></div>
+      </div>
+      <div class="ajuste">
+        <label for="tamano">Tamaño de letra</label>
+        <div class="fila"><input id="tamano" type="range" min="20" max="140" step="2"><output id="oTam"></output></div>
+      </div>
+      <div class="ajuste">
+        <label for="ancho">Ancho del texto</label>
+        <div class="fila"><input id="ancho" type="range" min="40" max="100" step="5"><output id="oAncho"></output></div>
+      </div>
+      <div class="ajuste">
+        <span class="lbl">Opciones</span>
+        <label class="switch" for="espejo"><input id="espejo" type="checkbox"> Modo espejo</label>
+        <label class="switch" for="conCuenta"><input id="conCuenta" type="checkbox"> Cuenta 3, 2, 1</label>
+      </div>
+    </div>
+
+    <div class="acciones">
+      <button class="btn" id="limpiar" type="button">Borrar texto</button>
+      <button class="btn" id="ejemplo" type="button">Poner ejemplo</button>
+    </div>
+
+    <p class="ayuda">
+      Toca el texto para pausar o seguir. Arrastra para moverlo.
+      Con teclado: <kbd>Espacio</kbd> pausa · <kbd>↑</kbd><kbd>↓</kbd> velocidad · <kbd>←</kbd><kbd>→</kbd> atrás y adelante · <kbd>+</kbd><kbd>−</kbd> letra · <kbd>M</kbd> espejo · <kbd>R</kbd> al inicio · <kbd>Esc</kbd> salir.
+      Lo que va entre corchetes, como [PAUSA], sale chico y en otro color.
+    </p>
+  </div>
+</main>
+
+<div id="escena" hidden>
+  <div id="zona">
+    <div id="flip"><div id="riel"><div id="texto"></div></div></div>
+    <div id="sombra"></div>
+    <div id="lectura"></div>
+    <div id="cuenta" hidden></div>
+  </div>
+
+  <div id="panel">
+    <div id="pEstado"></div>
+    <div id="pTiempo">0:00<small>Faltan</small></div>
+    <div class="avance"><div id="progreso"></div></div>
+    <div class="botones">
+      <button id="bPlay" type="button">Seguir</button>
+      <button id="bAtras" type="button">⏪ Atrás</button>
+      <button id="bInicio" type="button">⏮ Inicio</button>
+      <button id="bAdelante" type="button">Adelante ⏩</button>
+      <button id="bVelMenos" type="button">− Lento</button>
+      <div class="lbl">Velocidad<b id="oVel2"></b></div>
+      <button id="bVelMas" type="button">+ Rápido</button>
+      <button id="bTamMenos" type="button">A− Letra</button>
+      <button id="bEspejo" type="button">⇋ Espejo</button>
+      <button id="bTamMas" type="button">A+ Letra</button>
+      <button id="bQr" type="button">Teléfono</button>
+      <button id="bPantalla" type="button">⛶ Completa</button>
+      <button id="bSalir" type="button">✕ Salir</button>
+    </div>
+  </div>
+</div>
+
+<div id="qrPanel" hidden>
+  <div class="qrCaja">
+    <h2>Escanéalo con el teléfono</h2>
+    <div id="qr"><img id="qrImg" alt="Código QR del control"></div>
+    <p id="qrNota">El teléfono tiene que estar en el mismo Wi-Fi que esta computadora. No hace falta internet.</p>
+    <span id="qrLiga"></span>
+    <button class="btn" id="cerrarQr" type="button">Listo</button>
+  </div>
+</div>
+
+<main id="remoto" hidden>
+  <header>
+    <h1>Control</h1>
+    <span id="rEstado">Conectando…</span>
+  </header>
+  <div class="rBarra"><div id="rProg"></div></div>
+  <div class="rInfo"><span id="rPct">0%</span><span id="rFalta"></span></div>
+  <button id="rPlay" class="pausado" type="button" data-a="alternar" disabled>Seguir</button>
+  <button id="rDesde" type="button" disabled>Empezar desde…</button>
+  <div class="rFila">
+    <button type="button" data-a="atras" disabled>⏪ Atrás</button>
+    <button type="button" data-a="inicio" disabled>⏮ Inicio</button>
+    <button type="button" data-a="adelante" disabled>Adelante ⏩</button>
+  </div>
+  <div class="rFila">
+    <button type="button" data-a="vel-" disabled>− Lento</button>
+    <div class="lbl">Velocidad<b id="rVel">–</b></div>
+    <button type="button" data-a="vel+" disabled>+ Rápido</button>
+  </div>
+  <div class="rFila">
+    <button type="button" data-a="tam-" disabled>A− Letra</button>
+    <button type="button" data-a="espejo" disabled>⇋ Espejo</button>
+    <button type="button" data-a="tam+" disabled>A+ Letra</button>
+  </div>
+</main>
+
+<div id="rGuion" hidden>
+  <div class="tope">
+    <span id="rAviso">Toca la palabra donde quieres empezar</span>
+    <button class="btn" id="rCerrar" type="button">Cerrar</button>
+  </div>
+  <div id="rLista"></div>
+</div>
+
+<script>
+(async () => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+
+  // Estado del control remoto. Va arriba porque pintar() lo usa desde el primer cuadro.
+  // El teléfono entra por /control?k=<clave>; la computadora, por la raíz.
+  const CLAVE = new URLSearchParams(location.search).get('k') || '';
+  const esRemoto = location.pathname === '/control';
+  let sala = null;            // la conexión con el otro lado, cuando existe
+  let ultimoEstado = '';
+  let ultimoEnvio = 0;
+  let telefonos = 0;          // teléfonos conectados como control
+
+  const EJEMPLO =
+`Hola, soy María Sada, de Inmobiliaria Sada.
+
+Bienvenidos a esta casa en Cumbres, con tres recámaras, dos baños y medio y jardín al fondo.
+
+[Caminar hacia la sala]
+
+Lo primero que van a notar es la luz. La sala y el comedor dan al poniente, así que en la tarde todo se ilumina.
+
+[PAUSA]
+
+La cocina está remodelada, con barra y salida directa al jardín, ideal para reuniones.
+
+Arriba está la recámara principal, con vestidor y baño completo.
+
+Si les interesa conocerla, escríbanme al número que aparece en pantalla. Con gusto les agendo una visita.`;
+
+  const limitar = (v, a, b) => Math.min(b, Math.max(a, v));
+
+  // ---------- El guion partido en palabras ----------
+  // La pantalla y el teléfono lo parten con esta MISMA función: así la palabra 57 del
+  // teléfono es la palabra 57 de la pantalla. Si cada lado contara a su manera, tocar
+  // una palabra en el teléfono brincaría a otra.
+  function trocear(txt) {
+    const parrafos = [];
+    let n = 0;
+    for (const bloque of String(txt).replace(/\r\n?/g, '\n').split(/\n\s*\n/)) {
+      const limpio = bloque.trim();
+      if (!limpio) continue;
+      const piezas = [];
+      limpio.split(/(\[[^\]\n]*\])/).forEach((parte, j) => {
+        if (!parte) return;
+        const nota = j % 2 === 1;
+        for (const t of parte.split(/(\s+)/)) {
+          if (!t) continue;
+          if (/^\s+$/.test(t)) piezas.push(t.includes('\n') ? { br: true } : { esp: true });
+          else piezas.push({ t, nota, i: n++ });
+        }
+      });
+      parrafos.push(piezas);
+    }
+    return { parrafos, total: n };
+  }
+
+  // Huella corta del guion, para saber si los dos lados tienen el mismo texto.
+  function huella(txt) {
+    let h = 5381;
+    const s = String(txt);
+    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    return h.toString(36) + '.' + s.length;
+  }
+
+  function pintarGuion(destino, txt) {
+    destino.textContent = '';
+    const { parrafos, total } = trocear(txt);
+    const frag = document.createDocumentFragment();
+    for (const piezas of parrafos) {
+      const p = document.createElement('p');
+      for (const pz of piezas) {
+        if (pz.br) { p.appendChild(document.createElement('br')); continue; }
+        if (pz.esp) { p.appendChild(document.createTextNode(' ')); continue; }
+        const s = document.createElement('span');
+        s.dataset.i = pz.i;
+        if (pz.nota) s.className = 'nota';
+        s.textContent = pz.t;
+        p.appendChild(s);
+      }
+      frag.appendChild(p);
+    }
+    destino.appendChild(frag);
+    return total;
+  }
+
+  // ---------- Ajustes guardados en la computadora ----------
+  const porDefecto = {
+    texto: EJEMPLO,
+    velocidad: 6,
+    tamano: 56,
+    ancho: 100,
+    espejo: false,
+    cuenta: true,
+  };
+  let cfg = { ...porDefecto };
+  let habiaGuardado = false;
+  // Se guardan en un archivo de la app y no en el navegador: así no se pierden si cambia el puerto.
+  if (!esRemoto) {
+    try {
+      const r = await fetch('/api/ajustes', { cache: 'no-store' });
+      const g = r.ok ? await r.json() : null;
+      if (g && typeof g === 'object' && Object.keys(g).length) { cfg = { ...porDefecto, ...g }; habiaGuardado = true; }
+    } catch (_) {}
+  }
+  delete cfg.raya;   // el ajuste de la raya ya no existe: ahora el centro siempre queda libre
+  cfg.velocidad = limitar(Number(cfg.velocidad) || 6, 1, 20);
+  cfg.tamano = limitar(Number(cfg.tamano) || 48, 20, 140);
+  cfg.ancho = limitar(Number(cfg.ancho) || 100, 40, 100);
+  if (typeof cfg.texto !== 'string') cfg.texto = EJEMPLO;
+
+  let tGuardar = 0;
+  // Los guardados van en fila, uno tras otro: si dos se cruzaran, uno viejo podría
+  // llegar después y pisar el texto nuevo.
+  let fila = Promise.resolve();
+  function guardarYa() {
+    clearTimeout(tGuardar);
+    tGuardar = 0;
+    if (esRemoto) return fila;
+    const cuerpo = JSON.stringify(cfg);
+    fila = fila.then(() => fetch('/api/ajustes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: cuerpo, keepalive: cuerpo.length < 60000,
+    })).catch(() => {});
+    return fila;
+  }
+  // La app la llama antes de cerrar la ventana.
+  window.__guardarYa = () => guardarYa();
+  function guardar() {
+    if (esRemoto) return;
+    clearTimeout(tGuardar);
+    tGuardar = setTimeout(guardarYa, 250);
+  }
+  window.addEventListener('pagehide', () => { if (tGuardar) guardarYa(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && tGuardar) guardarYa(); });
+  // La primera vez se guarda el ejemplo, para que el teléfono lea el mismo texto que la pantalla.
+  if (!esRemoto && !habiaGuardado) guardarYa();
+
+  // ---------- Editor ----------
+  const guion = $('guion');
+  guion.value = cfg.texto;
+  const controles = { velocidad: 'oVel', tamano: 'oTam', ancho: 'oAncho' };
+  for (const k of Object.keys(controles)) {
+    const el = $(k);
+    el.value = cfg[k];
+    el.addEventListener('input', () => { cfg[k] = Number(el.value); pintarEditor(); guardar(); });
+  }
+  $('espejo').checked = !!cfg.espejo;
+  $('conCuenta').checked = !!cfg.cuenta;
+  $('espejo').addEventListener('change', e => { cfg.espejo = e.target.checked; guardar(); });
+  $('conCuenta').addEventListener('change', e => { cfg.cuenta = e.target.checked; guardar(); });
+  // La huella del texto se recalcula solo cuando cambia, no en cada cuadro de la animación.
+  let huellaCfg = huella(cfg.texto);
+  function nuevoTexto(t) { cfg.texto = t; huellaCfg = huella(t); pintarEditor(); guardar(); avisarEstado(true); }
+  guion.addEventListener('input', () => nuevoTexto(guion.value));
+  $('limpiar').addEventListener('click', () => { guion.value = ''; nuevoTexto(''); guion.focus(); });
+  $('ejemplo').addEventListener('click', () => { guion.value = EJEMPLO; nuevoTexto(EJEMPLO); });
+
+  function pintarEditor() {
+    $('oVel').textContent = cfg.velocidad;
+    $('oTam').textContent = cfg.tamano;
+    $('oAncho').textContent = cfg.ancho + '%';
+    const palabras = (cfg.texto.match(/\S+/g) || []).length;
+    // Unas 140 palabras por minuto es el ritmo normal de alguien leyendo a cámara.
+    const min = palabras / 140;
+    $('conteo').textContent = palabras
+      ? `${palabras} palabras · cerca de ${min < 1 ? Math.max(1, Math.round(min * 60)) + ' s' : Math.round(min * 10) / 10 + ' min'} leyendo`
+      : 'Sin texto';
+    $('empezar').disabled = !palabras;
+  }
+  pintarEditor();
+
+  // ---------- Escenario ----------
+  const escena = $('escena'), zonaEl = $('zona'), flip = $('flip'), riel = $('riel'), texto = $('texto');
+  const lectura = $('lectura'), cuentaEl = $('cuenta');
+  const LINEA = 0.35;               // la línea de lectura, en proporción de la altura del texto
+
+  let activo = false;   // escenario abierto
+  let corriendo = false;
+  let pos = 0;          // cuánto se ha subido el texto, en px (decimal; nunca se redondea)
+  let maxPos = 0;
+  let ultimo = 0;       // marca de tiempo del cuadro anterior
+  let cuadro = 0;       // id de requestAnimationFrame
+  let intervaloCuenta = 0;
+  let candado = null;   // mantener la pantalla prendida
+  let palabras = [];    // los <span> de cada palabra, en orden
+  let alturas = [];     // dónde empieza el renglón de cada palabra (para saber cuál se está leyendo)
+  let lineaY = 0;       // espacio de arriba hasta la línea de lectura
+  let huellaTexto = huella(cfg.texto);
+
+  function armarTexto() {
+    pintarGuion(texto, cfg.texto);
+    palabras = Array.from(texto.querySelectorAll('[data-i]'));
+    huellaTexto = huella(cfg.texto);
+  }
+
+  // Recalcula medidas sin perder el lugar donde va la lectura.
+  function medir(conservar = true) {
+    const fraccion = conservar && maxPos > 0 ? pos / maxPos : 0;
+    const alto = zonaEl.clientHeight;
+    texto.style.fontSize = cfg.tamano + 'px';
+    texto.style.maxWidth = cfg.ancho + '%';
+    lineaY = Math.round(alto * LINEA);
+    texto.style.paddingTop = lineaY + 'px';
+    texto.style.paddingBottom = alto + 'px';
+    lectura.style.top = (lineaY + cfg.tamano * 0.68) + 'px';
+    flip.classList.toggle('espejo', !!cfg.espejo);
+    // Termina cuando el último renglón llega a la línea de lectura.
+    const altoTexto = texto.scrollHeight - lineaY - alto;
+    const renglon = cfg.tamano * 1.35;
+    maxPos = Math.max(0, altoTexto - renglon);
+    alturas = palabras.map(s => s.offsetTop - lineaY);
+    pos = conservar ? fraccion * maxPos : 0;
+    pintar();
+  }
+
+  // La palabra que está en la línea de lectura: la última cuyo renglón ya llegó.
+  function palabraActual() {
+    if (!alturas.length) return 0;
+    let a = 0, b = alturas.length - 1, r = 0;
+    const p = pos + cfg.tamano * 0.3;
+    while (a <= b) { const m = (a + b) >> 1; if (alturas[m] <= p) { r = m; a = m + 1; } else b = m - 1; }
+    return r;
+  }
+
+  function pxPorSegundo() {
+    // Velocidad 10 = un renglón por segundo, sin importar el tamaño de letra.
+    return cfg.velocidad * cfg.tamano * 1.35 * 0.1;
+  }
+
+  function fmt(s) {
+    s = Math.max(0, Math.round(s));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  function pintar() {
+    pos = limitar(pos, 0, maxPos);
+    riel.style.transform = `translate3d(0, ${-pos}px, 0)`;
+    $('progreso').style.width = (maxPos ? (pos / maxPos) * 100 : 0) + '%';
+    $('pTiempo').firstChild.nodeValue = fmt((maxPos - pos) / pxPorSegundo());
+    $('oVel2').textContent = cfg.velocidad;
+    $('bEspejo').classList.toggle('on', !!cfg.espejo);
+    $('bPlay').textContent = (corriendo || intervaloCuenta) ? 'Pausa' : (pos >= maxPos && maxPos > 0 ? 'Otra vez' : 'Seguir');
+    avisarEstado(false);
+  }
+
+  function paso(t) {
+    if (!corriendo) return;
+    // Si la ventana se fue a segundo plano, no dar un brinco al volver.
+    const dt = ultimo ? Math.min(0.1, (t - ultimo) / 1000) : 0;
+    ultimo = t;
+    pos += pxPorSegundo() * dt;
+    if (pos >= maxPos) { pos = maxPos; pausar(); return; }
+    pintar();
+    cuadro = requestAnimationFrame(paso);
+  }
+
+  function cancelarCuenta() {
+    clearInterval(intervaloCuenta);
+    intervaloCuenta = 0;
+    cuentaEl.hidden = true;
+  }
+
+  function seguir(conCuenta) {
+    if (corriendo || intervaloCuenta) return;
+    if (pos >= maxPos && maxPos > 0) pos = 0;   // al final, volver a empezar
+    quitarMarca();
+    if (conCuenta && cfg.cuenta) {
+      let n = 3;
+      cuentaEl.textContent = n;
+      cuentaEl.hidden = false;
+      intervaloCuenta = setInterval(() => {
+        n -= 1;
+        if (n > 0) { cuentaEl.textContent = n; return; }
+        cancelarCuenta();
+        arrancar();
+      }, 1000);
+      pintar();
+      avisarEstado(true);
+      return;
+    }
+    arrancar();
+  }
+
+  function arrancar() {
+    if (!activo) return;
+    corriendo = true;
+    ultimo = 0;
+    cancelAnimationFrame(cuadro);
+    cuadro = requestAnimationFrame(paso);
+    pedirCandado();
+    pintar();
+  }
+
+  function pausar() {
+    cancelarCuenta();
+    corriendo = false;
+    cancelAnimationFrame(cuadro);
+    soltarCandado();
+    pintar();
+  }
+
+  function alternar() { (corriendo || intervaloCuenta) ? pausar() : seguir(true); }
+
+  // ---------- Ir a una palabra (desde el teléfono) ----------
+  let marcada = null;
+  function quitarMarca() { if (marcada) { marcada.classList.remove('marca'); marcada = null; } }
+  function irAPalabra(i) {
+    if (!activo) abrir(false);
+    if (!activo) return;
+    pausar();
+    const s = palabras[i];
+    if (!s) return;
+    pos = s.offsetTop - lineaY;
+    quitarMarca();
+    s.classList.add('marca');   // se queda resaltada hasta que se le da Seguir
+    marcada = s;
+    pintar();
+    avisarEstado(true);
+  }
+
+  // ---------- Pantalla prendida ----------
+  async function pedirCandado() {
+    try {
+      if ('wakeLock' in navigator && !candado) {
+        candado = await navigator.wakeLock.request('screen');
+        candado.addEventListener('release', () => { candado = null; });
+      }
+    } catch (_) { candado = null; }
+  }
+  function soltarCandado() {
+    try { if (candado) candado.release(); } catch (_) {}
+    candado = null;
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && corriendo) { ultimo = 0; pedirCandado(); }
+  });
+
+  // ---------- Abrir y cerrar ----------
+  function abrir(arrancarSolo = true) {
+    if (!(cfg.texto.match(/\S/))) return;
+    activo = true;
+    armarTexto();
+    escena.hidden = false;
+    document.documentElement.style.overflow = 'hidden';
+    pos = 0;
+    medir(false);
+    if (arrancarSolo) seguir(true);
+    else avisarEstado(true);
+  }
+
+  function cerrar() {
+    pausar();
+    quitarMarca();
+    activo = false;
+    escena.hidden = true;
+    document.documentElement.style.overflow = '';
+    try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch (_) {}
+    avisarEstado(true);   // que el teléfono sepa que ya se salió
+    $('empezar').focus();
+  }
+
+  function moverRenglones(n) { if (activo) { pos += cfg.tamano * 1.35 * n; pintar(); } }
+  function cambiarVel(d) { cfg.velocidad = limitar(cfg.velocidad + d, 1, 20); $('velocidad').value = cfg.velocidad; pintarEditor(); pintar(); guardar(); }
+  function cambiarTam(d) { cfg.tamano = limitar(cfg.tamano + d, 20, 140); $('tamano').value = cfg.tamano; pintarEditor(); if (activo) medir(true); guardar(); }
+  function cambiarEspejo() { cfg.espejo = !cfg.espejo; $('espejo').checked = cfg.espejo; if (activo) medir(true); guardar(); }
+
+  $('empezar').addEventListener('click', () => abrir(true));
+  $('bSalir').addEventListener('click', cerrar);
+  $('bPlay').addEventListener('click', () => alternar());
+  $('bInicio').addEventListener('click', () => { pos = 0; pintar(); });
+  $('bAtras').addEventListener('click', () => moverRenglones(-2));
+  $('bAdelante').addEventListener('click', () => moverRenglones(2));
+  $('bVelMenos').addEventListener('click', () => cambiarVel(-1));
+  $('bVelMas').addEventListener('click', () => cambiarVel(1));
+  $('bTamMenos').addEventListener('click', () => cambiarTam(-4));
+  $('bTamMas').addEventListener('click', () => cambiarTam(4));
+  $('bEspejo').addEventListener('click', cambiarEspejo);
+  $('bPantalla').addEventListener('click', async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch (_) {}
+  });
+
+  // ---------- Tocar y arrastrar el texto ----------
+  // Solo sobre el texto: los botones de la derecha no deben pausar ni mover nada por accidente.
+  let toque = null;
+  zonaEl.addEventListener('pointerdown', e => {
+    if (!activo || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    toque = { id: e.pointerId, y: e.clientY, pos, arrastra: false, ibaCorriendo: corriendo || !!intervaloCuenta };
+    try { zonaEl.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  zonaEl.addEventListener('pointermove', e => {
+    if (!toque || e.pointerId !== toque.id) return;
+    const dy = e.clientY - toque.y;
+    if (!toque.arrastra && Math.abs(dy) > 8) {
+      toque.arrastra = true;
+      if (toque.ibaCorriendo) { cancelarCuenta(); corriendo = false; cancelAnimationFrame(cuadro); }
+    }
+    if (toque.arrastra) { pos = toque.pos - dy; pintar(); }
+  });
+  function soltar(e) {
+    if (!toque || e.pointerId !== toque.id) return;
+    const t = toque; toque = null;
+    if (e.type === 'pointercancel') { if (t.ibaCorriendo && !corriendo) arrancar(); return; }
+    if (t.arrastra) { if (t.ibaCorriendo) arrancar(); else pintar(); }
+    else alternar();
+  }
+  zonaEl.addEventListener('pointerup', soltar);
+  zonaEl.addEventListener('pointercancel', soltar);
+
+  zonaEl.addEventListener('wheel', e => {
+    if (!activo) return;
+    e.preventDefault();
+    pos += e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY;
+    pintar();
+  }, { passive: false });
+
+  // ---------- Teclado ----------
+  document.addEventListener('keydown', e => {
+    const k = e.key;
+    // Con el QR abierto, el teclado solo sirve para cerrarlo.
+    if (!$('qrPanel').hidden) { if (k === 'Escape') { $('qrPanel').hidden = true; e.preventDefault(); } return; }
+    if (!activo || e.metaKey || e.ctrlKey || e.altKey) return;
+    let hecho = true;
+    if (k === ' ' || k === 'Spacebar' || k === 'Enter') alternar();
+    else if (k === 'ArrowUp') cambiarVel(1);
+    else if (k === 'ArrowDown') cambiarVel(-1);
+    else if (k === 'ArrowLeft' || k === 'PageUp') moverRenglones(-2);
+    else if (k === 'ArrowRight' || k === 'PageDown') moverRenglones(2);
+    else if (k === '+' || k === '=') cambiarTam(4);
+    else if (k === '-' || k === '_') cambiarTam(-4);
+    else if (k === 'm' || k === 'M') cambiarEspejo();
+    else if (k === 'r' || k === 'R' || k === 'Home') { pos = 0; pintar(); }
+    else if (k === 'Escape') { if (!document.fullscreenElement) cerrar(); else hecho = false; }
+    else hecho = false;
+    if (hecho) e.preventDefault();
+  });
+  // Que Espacio no "presione" el último botón tocado del panel además de pausar.
+  $('panel').addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') e.preventDefault(); });
+
+  // Cambiar el tamaño de la ventana: volver a medir sin perder el lugar.
+  if ('ResizeObserver' in window) new ResizeObserver(() => { if (activo) medir(true); }).observe(zonaEl);
+  else window.addEventListener('resize', () => { if (activo) medir(true); });
+
+  // ---------- Control desde el teléfono ----------
+  // El QR abre /control en el teléfono, por el Wi-Fi. La app de la computadora pasa
+  // los mensajes: órdenes del teléfono a la pantalla, estado de la pantalla al teléfono.
+  const ROL = esRemoto ? 'control' : 'pantalla';
+  const consulta = `rol=${ROL}&k=${encodeURIComponent(CLAVE)}`;
+
+  function abrirSala() {
+    const oyentes = {};
+    const s = {
+      emit(topic, data) {
+        return fetch('/api/enviar?' + consulta, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic, data }),
+        }).then(r => { if (!r.ok) throw new Error(String(r.status)); });
+      },
+      on(topic, fn) { (oyentes[topic] = oyentes[topic] || []).push(fn); },
+      alConectar: null,
+    };
+    // EventSource se reconecta solo si se cae el Wi-Fi o se reinicia la app.
+    const fuente = new EventSource('/api/eventos?' + consulta);
+    fuente.onopen = () => { if (s.alConectar) s.alConectar(); };
+    fuente.onmessage = e => {
+      let m;
+      try { m = JSON.parse(e.data); } catch (_) { return; }
+      if (!m || typeof m.topic !== 'string') return;
+      (oyentes[m.topic] || []).forEach(fn => { try { fn({ data: m.data }); } catch (_) {} });
+    };
+    return s;
+  }
+
+  function avisarEstado(forzar) {
+    if (!sala || esRemoto) return;
+    const ahora = Date.now();
+    const contando = !!intervaloCuenta;
+    // Siempre la huella del texto más nuevo: es el que el teléfono va a leer de la computadora.
+    const v = huellaCfg;
+    const clave = [activo, corriendo, contando, cfg.velocidad, cfg.espejo, cfg.tamano, pos >= maxPos, v].join('|');
+    if (!forzar && clave === ultimoEstado && ahora - ultimoEnvio < 500) return;
+    ultimoEstado = clave;
+    ultimoEnvio = ahora;
+    sala.emit('estado', {
+      activo, corriendo, contando, v,
+      velocidad: cfg.velocidad,
+      espejo: !!cfg.espejo,
+      pct: activo && maxPos ? Math.round((pos / maxPos) * 100) : 0,
+      faltan: activo ? Math.round((maxPos - pos) / pxPorSegundo()) : 0,
+      palabra: activo ? palabraActual() : 0,
+    }).catch(() => {});
+  }
+
+  function ejecutar(d) {
+    const a = d.a;
+    if (a === 'alternar') { if (!activo) abrir(true); else alternar(); }
+    else if (a === 'ir') {
+      const i = Number(d.i);
+      // Solo si el teléfono tiene el mismo guion; si no, el estado le avisa y lo vuelve a pedir.
+      if (Number.isInteger(i) && i >= 0 && d.v === huellaCfg) {
+        if (activo && huellaTexto !== d.v) cerrar();   // se editó con la pantalla abierta: rearmar
+        irAPalabra(i);
+      } else avisarEstado(true);
+    }
+    else if (a === 'atras') moverRenglones(-2);
+    else if (a === 'adelante') moverRenglones(2);
+    else if (a === 'inicio') { if (activo) { pos = 0; pintar(); } }
+    else if (a === 'vel-') cambiarVel(-1);
+    else if (a === 'vel+') cambiarVel(1);
+    else if (a === 'tam-') { if (activo) cambiarTam(-4); }
+    else if (a === 'tam+') { if (activo) cambiarTam(4); }
+    else if (a === 'espejo') cambiarEspejo();
+    // Sin forzar: los cambios de estado salen al instante y la posición cada medio segundo,
+    // para que muchos toques seguidos no saturen la conexión.
+    avisarEstado(false);
+  }
+
+  // Panel del QR. El código se pide cada vez que se abre: si cambió el Wi-Fi, cambia la dirección.
+  let pedidoQr = 0;
+  async function abrirQr() {
+    if (corriendo || intervaloCuenta) pausar();
+    $('qrPanel').hidden = false;
+    const mio = ++pedidoQr;
+    $('qr').hidden = true;
+    $('qrLiga').textContent = '';
+    $('qrNota').textContent = 'Preparando el código…';
+    let d = null;
+    try { const r = await fetch('/api/qr', { cache: 'no-store' }); d = r.ok ? await r.json() : null; } catch (_) {}
+    if (mio !== pedidoQr) return;   // ya se pidió otro
+    if (d && d.imagen && d.liga) {
+      $('qrImg').src = d.imagen;
+      $('qr').hidden = false;
+      $('qrLiga').textContent = d.liga;
+      $('qrNota').textContent = 'El teléfono tiene que estar en el mismo Wi-Fi que esta computadora. No hace falta internet.';
+    } else if (d && d.error === 'sin-red') {
+      $('qrNota').textContent = 'Esta computadora no está conectada a ningún Wi-Fi. Conéctala a la misma red que el teléfono y vuelve a abrir esto.';
+    } else {
+      $('qrNota').textContent = 'No se pudo preparar el código. Cierra la app y vuelve a abrirla.';
+    }
+  }
+  $('abrirQr').addEventListener('click', abrirQr);
+  $('bQr').addEventListener('click', abrirQr);
+  $('cerrarQr').addEventListener('click', () => { $('qrPanel').hidden = true; });
+  $('qrPanel').addEventListener('click', e => { if (e.target === $('qrPanel')) $('qrPanel').hidden = true; });
+
+  function pintarControles() {
+    const txt = telefonos === 1 ? '● Teléfono conectado' : `● ${telefonos} teléfonos conectados`;
+    $('enlinea').hidden = !telefonos;
+    $('enlinea').textContent = txt;
+    $('pEstado').textContent = telefonos ? txt : '';
+    $('pEstado').classList.toggle('ok', !!telefonos);
+  }
+
+  // ---------- La vista del teléfono ----------
+  let vioEstado = 0;
+  let datosRemotos = null;
+  let guionTel = { v: '', texto: '' };   // el guion que tiene cargado el teléfono
+  function conectadoTel() { return Date.now() - vioEstado < 4000; }
+
+  function pintarRemoto(d) {
+    const ok = conectadoTel();
+    $('rEstado').textContent = ok ? (d && d.activo ? 'Conectado' : 'Conectado · en el editor')
+      : (sala ? 'Abre el teleprompter en la computadora' : 'Conectando…');
+    $('rEstado').classList.toggle('ok', ok);
+    document.querySelectorAll('#remoto [data-a]').forEach(b => { b.disabled = !ok; });
+    $('rDesde').disabled = !ok;
+    if (!d) return;
+    // Durante la cuenta 3, 2, 1 el botón ya detiene, así que dice Pausa.
+    const va = d.corriendo || d.contando;
+    $('rPlay').textContent = va ? 'Pausa' : (d.activo ? 'Seguir' : 'Empezar');
+    $('rPlay').classList.toggle('pausado', !va);
+    $('rVel').textContent = d.velocidad;
+    $('rProg').style.width = (d.pct || 0) + '%';
+    $('rPct').textContent = (d.pct || 0) + '%';
+    $('rFalta').textContent = d.activo ? 'Faltan ' + fmt(d.faltan || 0) : '';
+    // Si la lista está abierta y el guion cambió en la computadora, se vuelve a pedir.
+    if (!$('rGuion').hidden && d.v && d.v !== guionTel.v) cargarGuionTel();
+    else if (!$('rGuion').hidden) marcarAqui(d.palabra);
+  }
+
+  let pidiendoGuion = null;
+  function cargarGuionTel() {
+    if (pidiendoGuion) return pidiendoGuion;
+    $('rAviso').textContent = 'Cargando el guion…';
+    pidiendoGuion = fetch('/api/guion?k=' + encodeURIComponent(CLAVE), { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(g => {
+        const txt = g && typeof g.texto === 'string' ? g.texto : '';
+        guionTel = { texto: txt, v: huella(txt) };
+        const total = pintarGuion($('rLista'), txt);
+        if (!total) $('rAviso').textContent = 'El guion está vacío.';
+        else if (datosRemotos && datosRemotos.v && datosRemotos.v !== guionTel.v) $('rAviso').textContent = 'El guion se está guardando en la computadora…';
+        else $('rAviso').textContent = 'Toca la palabra donde quieres empezar';
+        marcarAqui(datosRemotos ? datosRemotos.palabra : 0, true);
+      })
+      .catch(() => { $('rAviso').textContent = 'No se pudo traer el guion. Revisa el Wi-Fi.'; })
+      .finally(() => { pidiendoGuion = null; });
+    return pidiendoGuion;
+  }
+
+  let aquiEl = null;
+  function marcarAqui(i, centrar) {
+    const el = $('rLista').querySelector(`[data-i="${Number(i) || 0}"]`);
+    if (aquiEl && aquiEl !== el) aquiEl.classList.remove('aqui');
+    aquiEl = el;
+    if (!el) return;
+    el.classList.add('aqui');
+    if (centrar) el.scrollIntoView({ block: 'center' });
+  }
+
+  if (esRemoto) {
+    $('editor').hidden = true;
+    $('remoto').hidden = false;
+    document.title = 'Control del teleprompter';
+    const tocar = data => {
+      pedirCandado();   // que el teléfono no se apague mientras controla (si el teléfono lo permite)
+      if (sala) sala.emit('cmd', data).catch(() => {});
+      if (navigator.vibrate) try { navigator.vibrate(15); } catch (_) {}
+    };
+    document.querySelectorAll('#remoto [data-a]').forEach(b => b.addEventListener('click', () => tocar({ a: b.dataset.a })));
+    $('rDesde').addEventListener('click', () => { $('rGuion').hidden = false; cargarGuionTel(); });
+    $('rCerrar').addEventListener('click', () => { $('rGuion').hidden = true; });
+    // Un toque en una palabra: brinca ahí. Se distingue de deslizar para recorrer la lista.
+    let inicioToque = null;
+    $('rLista').addEventListener('pointerdown', e => { inicioToque = { x: e.clientX, y: e.clientY }; });
+    $('rLista').addEventListener('click', e => {
+      const s = e.target.closest('[data-i]');
+      const movio = inicioToque && (Math.abs(e.clientX - inicioToque.x) > 10 || Math.abs(e.clientY - inicioToque.y) > 10);
+      inicioToque = null;
+      if (!s || movio || !conectadoTel()) return;
+      if (datosRemotos && datosRemotos.v && datosRemotos.v !== guionTel.v) { cargarGuionTel(); return; }
+      $('rLista').querySelectorAll('.elegida').forEach(x => x.classList.remove('elegida'));
+      s.classList.add('elegida');
+      tocar({ a: 'ir', i: Number(s.dataset.i), v: guionTel.v });
+      setTimeout(() => { $('rGuion').hidden = true; s.classList.remove('elegida'); }, 350);
+    });
+    setInterval(() => pintarRemoto(datosRemotos), 1000);
+    pintarRemoto(null);
+  }
+
+  // Conectar. Si no se puede, el teleprompter funciona igual, solo sin control.
+  try { sala = abrirSala(); } catch (_) { sala = null; }
+  if (sala) {
+    if (esRemoto) {
+      sala.on('estado', m => {
+        if (!m.data || typeof m.data !== 'object') return;
+        const d = m.data;
+        datosRemotos = {
+          activo: !!d.activo, corriendo: !!d.corriendo, contando: !!d.contando,
+          v: typeof d.v === 'string' ? d.v : '',
+          velocidad: limitar(Number(d.velocidad) || 0, 0, 20),
+          pct: limitar(Number(d.pct) || 0, 0, 100),
+          faltan: Math.max(0, Number(d.faltan) || 0),
+          palabra: Math.max(0, Math.floor(Number(d.palabra) || 0)),
+        };
+        vioEstado = Date.now();
+        pintarRemoto(datosRemotos);
+      });
+      // Pedir el estado cada vez que se conecta (también al volver de una caída del Wi-Fi).
+      sala.alConectar = () => sala.emit('hola', {}).catch(() => {});
+      pintarRemoto(null);
+    } else {
+      sala.on('cmd', m => {
+        if (!m.data || typeof m.data.a !== 'string') return;
+        ejecutar(m.data);
+      });
+      sala.on('hola', () => avisarEstado(true));
+      sala.on('telefonos', m => {
+        telefonos = Math.max(0, Math.floor(Number(m.data) || 0));
+        pintarControles();
+      });
+      sala.alConectar = () => avisarEstado(true);
+      // Latido: el teléfono sabe que la pantalla sigue ahí.
+      setInterval(() => avisarEstado(true), 1500);
+    }
+  }
+})();
+</script>
